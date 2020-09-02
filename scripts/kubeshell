@@ -1,0 +1,98 @@
+#!/usr/bin/env python
+
+import os
+import sys
+if sys.version_info < (2,7):
+    print("kubeshell needs Python 2.7 to run, please upgrade")
+    sys.exit(7)
+
+from subprocess import check_output, call
+from pick import pick
+import argparse
+import shlex
+import traceback
+
+def getTitle():
+    line = "   NAME                                                              READY   STATUS             RESTARTS   AGE"
+    # Get terminal width
+    rows, columns = os.popen('stty size', 'r').read().split()
+    width = int(columns) - 7
+
+    if width < len(line):
+        return line[:width] + "..." 
+    else:
+        return line
+
+def getPods (substring="", namespace=""):
+    commits = []
+
+    # Get terminal width
+    rows, columns = os.popen('stty size', 'r').read().split()
+    width = int(columns) - 7
+
+    try:
+        if not isBlank(namespace):
+            cmd = "kubectl get pods -n {0}".format(namespace)
+        else:
+            cmd = "kubectl get pods"
+
+        output = check_output(shlex.split(cmd))
+        output = output.decode(encoding='UTF-8').split("\n")[1:];
+        for line in output:
+            if not isBlank(line):
+                if substring in line:
+                    if width < len(line):
+                        commits.append(line[:width] + "..." )
+                    else:
+                        commits.append(line)
+    except Exception as e:
+        print ("Unable to get commits when running: " + cmd)
+        print (e)
+        traceback.print_exc()
+        pass
+    return commits
+
+def getAbsolutePath (path):
+    if path is None:
+        return path
+    return os.path.abspath(os.path.expandvars(os.path.expanduser(path)))
+
+def setupParser ():
+    parser = argparse.ArgumentParser(description='interactively shell into k8s pods')
+    parser.add_argument('substring', nargs='?', help="substring to filter pods", default="")
+    parser.add_argument('-s', '--shell', help='Which shell to use', default="/bin/sh")
+    parser.add_argument('-n', '--namespace', help='Which namespace to use', default="")
+    return parser
+
+def isBlank (myString):
+    return not (myString and myString.strip())
+
+def crux ():
+    parser = setupParser()
+    args = parser.parse_args()
+
+    current_index = 0
+    while True:
+        options = getPods(args.substring, args.namespace)
+        try:
+            title = 'Pick your pod:\n' + getTitle()
+            options.append("exit")
+            option, index = pick(options, title, "=>", current_index)
+            if option == "exit":
+                sys.exit(0)
+
+            pod = option.split(' ', 1)[0]
+            #print "Got option " + pod
+
+            if not isBlank(args.namespace):
+                cmd = "kubectl -n {0} exec --stdin --tty {1} -- {2}".format(args.namespace, pod, args.shell)
+            else:
+                cmd = "kubectl exec --stdin --tty {0} -- {1}".format(pod, args.shell)
+
+            #print "Running command " + cmd
+            call(shlex.split(cmd))
+        except Exception as e:
+            print (e)
+            sys.exit(3)
+
+if __name__ == "__main__":  crux()
